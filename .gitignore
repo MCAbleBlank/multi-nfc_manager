@@ -1,0 +1,27 @@
+# Gradle
+.gradle/
+build/
+**/build/
+
+# Local SDK path (machine-specific)
+local.properties
+
+# IDE
+.idea/
+.pocketdev/
+*.iml
+*.ipr
+*.iws
+out/
+
+# Android / build artifacts
+captures/
+.externalNativeBuild/
+.cxx/
+*.hprof
+*.jks
+*.keystore
+
+# OS
+.DS_Store
+Thumbs.db

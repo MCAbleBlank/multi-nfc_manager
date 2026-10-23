@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">NFC 卡包</string>
+    <string name="hce_service_description">NFC 卡包 NDEF 卡模拟</string>
+    <string name="hce_aid_group">NDEF 标签</string>
+</resources>

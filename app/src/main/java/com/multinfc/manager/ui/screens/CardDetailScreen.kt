@@ -84,7 +84,7 @@ fun CardDetailScreen(
     uidEmulationActive: Boolean,
     uidEmulationChecking: Boolean,
     uidEmulationSupported: Boolean,
-    uidEmulationReason: String?,
+    uidEmulationNeedsPermission: Boolean,
     uidEmulationEligible: Boolean,
     uidEmulationBusy: Boolean,
     onToggleUidEmulation: (Boolean) -> Unit,
@@ -295,14 +295,6 @@ fun CardDetailScreen(
                         modifier = Modifier.padding(horizontal = 16.dp),
                         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
                     )
-                    Text(
-                        text = "HCE 只能模拟 ISO-DEP 的 NDEF Type 4 标签，不包含 MIFARE " +
-                            "扇区或加密认证。若当前设备提供 NFC OEM 扩展，可用下方实验性 " +
-                            "UID 模拟呈现 UID；两个开关互斥，开启 UID 模拟会停止 HCE。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                    )
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -349,15 +341,13 @@ fun CardDetailScreen(
                             Spacer(Modifier.height(3.dp))
                             Text(
                                 text = when {
-                                    uidEmulationActive ->
-                                        "正在模拟 · 读卡器只会看到 UID，不包含卡片数据或密钥"
+                                    uidEmulationActive -> "正在模拟 · 仅向读卡器呈现 UID"
 
-                                    uidEmulationChecking -> "正在检查设备的 NFC OEM 扩展…"
-                                    !uidEmulationSupported ->
-                                        uidEmulationReason ?: "当前设备未提供 NFC OEM 扩展"
-
-                                    !uidEmulationEligible -> "这张卡的 UID 长度不支持（仅 4/7/10 字节）"
-                                    else -> "已停止 · 开启后通过系统 NFC OEM 扩展呈现该卡 UID"
+                                    uidEmulationChecking -> "正在检查支持情况…"
+                                    !uidEmulationSupported -> "当前设备不支持，详见设置"
+                                    uidEmulationNeedsPermission -> "需要 ADB 授权，详见设置"
+                                    !uidEmulationEligible -> "这张卡的 UID 长度不支持"
+                                    else -> "已停止"
                                 },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = if (uidEmulationActive) {
@@ -379,22 +369,14 @@ fun CardDetailScreen(
                             },
                             enabled = (
                                 uidEmulationActive ||
-                                    (uidEmulationSupported && uidEmulationEligible)
+                                    (uidEmulationSupported && uidEmulationEligible &&
+                                        !uidEmulationNeedsPermission)
                                 ) && !uidEmulationBusy,
                         )
                     }
                     HorizontalDivider(
                         modifier = Modifier.padding(horizontal = 16.dp),
                         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                    )
-                    Text(
-                        text = "仅重现 UID：不复制 MIFARE 扇区、密钥或加密认证，依赖这些" +
-                            "内容的门禁仍可能拒绝。需要 Android 16 QPR2+ 且厂商保留 NFC " +
-                            "OEM 扩展；关闭 NFC、重启或进程结束后模拟状态可能丢失。" +
-                            "请仅对你拥有或获准测试的卡片使用。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                     )
                 }
             }
@@ -517,9 +499,8 @@ fun CardDetailScreen(
             title = { Text("开启 UID 模拟？") },
             text = {
                 Text(
-                    "系统 NFC 控制器会在卡模拟时向读卡器呈现这张卡的 UID。" +
-                        "该功能仅重现 UID，不复制 MIFARE 扇区、密钥或加密认证；" +
-                        "是否被设备接受取决于手机固件和读卡器。" +
+                    "开启后，系统 NFC 控制器会向读卡器呈现这张卡的 UID。" +
+                        "仅重现 UID，不复制扇区数据或密钥；" +
                         "请仅在你拥有或获准测试的卡片上使用。"
                 )
             },

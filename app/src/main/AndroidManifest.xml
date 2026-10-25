@@ -1,7 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.NFC" />
+    <!-- Granted once over ADB for the experimental OnePlus vendor HCE path. -->
+    <uses-permission
+        android:name="android.permission.WRITE_SECURE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
 
     <uses-feature
         android:name="android.hardware.nfc"
@@ -17,6 +22,11 @@
         android:roundIcon="@mipmap/ic_launcher"
         android:supportsRtl="true"
         android:theme="@style/Theme.PocketDevApp">
+
+        <!-- OnePlus vendor HCE API used by the Android 15 fallback path. -->
+        <uses-library
+            android:name="nfcvendorlib"
+            android:required="false" />
 
         <activity
             android:name=".MainActivity"

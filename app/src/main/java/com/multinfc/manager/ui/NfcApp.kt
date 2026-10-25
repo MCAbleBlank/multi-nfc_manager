@@ -31,6 +31,7 @@ import com.multinfc.manager.ui.CardViewModel.WriteMode
 import com.multinfc.manager.ui.screens.CardDetailScreen
 import com.multinfc.manager.ui.screens.CardEditorScreen
 import com.multinfc.manager.ui.screens.HomeScreen
+import com.multinfc.manager.ui.screens.NfcInfoScreen
 import com.multinfc.manager.ui.screens.ScanSheet
 import com.multinfc.manager.ui.screens.SettingsScreen
 import kotlinx.coroutines.launch
@@ -45,6 +46,7 @@ fun NfcApp(
     var selectedUid by rememberSaveable { mutableStateOf<String?>(null) }
     var editingUid by rememberSaveable { mutableStateOf<String?>(null) }
     var settingsOpen by rememberSaveable { mutableStateOf(false) }
+    var nfcInfoOpen by rememberSaveable { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
@@ -105,8 +107,13 @@ fun NfcApp(
         }
     }
 
-    BackHandler(enabled = settingsOpen || selectedUid != null) {
+    LaunchedEffect(settingsOpen) {
+        if (!settingsOpen) nfcInfoOpen = false
+    }
+
+    BackHandler(enabled = nfcInfoOpen || settingsOpen || selectedUid != null) {
         when {
+            nfcInfoOpen -> nfcInfoOpen = false
             settingsOpen -> settingsOpen = false
             editingUid != null -> editingUid = null
             else -> selectedUid = null
@@ -154,15 +161,30 @@ fun NfcApp(
         label = "settings",
     ) { showSettings ->
         if (showSettings) {
-            SettingsScreen(
-                settings = viewModel.settings,
-                onBack = { settingsOpen = false },
-                onCardStyle = viewModel::setCardStyle,
-                onVolumeKeys = viewModel::setVolumeKeysEnabled,
-                onHaptics = viewModel::setHapticsEnabled,
-                onTilt = viewModel::setTiltEnabled,
-                onEnhancedEffects = viewModel::setEnhancedEffects,
-            )
+            if (nfcInfoOpen) {
+                NfcInfoScreen(
+                    capability = viewModel.uidEmulationCapability,
+                    busy = viewModel.uidEmulationBusy,
+                    onBack = { nfcInfoOpen = false },
+                    onRefresh = viewModel::refreshUidEmulationCapability,
+                    onRestoreDefaults = viewModel::restoreUidEmulationDefaults,
+                )
+            } else {
+                SettingsScreen(
+                    settings = viewModel.settings,
+                    onBack = { settingsOpen = false },
+                    onCardStyle = viewModel::setCardStyle,
+                    onVolumeKeys = viewModel::setVolumeKeysEnabled,
+                    onHaptics = viewModel::setHapticsEnabled,
+                    onTilt = viewModel::setTiltEnabled,
+                    onEnhancedEffects = viewModel::setEnhancedEffects,
+                    uidEmulationCapability = viewModel.uidEmulationCapability,
+                    onOpenNfcInfo = {
+                        nfcInfoOpen = true
+                        viewModel.refreshUidEmulationCapability()
+                    },
+                )
+            }
         } else {
             AnimatedContent(
                 targetState = selectedUid,
@@ -277,7 +299,8 @@ fun NfcApp(
                             uidEmulationChecking = viewModel.uidEmulationCapability == null,
                             uidEmulationSupported =
                                 viewModel.uidEmulationCapability?.supported == true,
-                            uidEmulationReason = viewModel.uidEmulationCapability?.reason,
+                            uidEmulationNeedsPermission = viewModel.uidEmulationCapability
+                                ?.let { it.needsSecureSettings && !it.secureSettingsGranted } == true,
                             uidEmulationEligible = UidCodec.parse(card.uid) != null,
                             uidEmulationBusy = viewModel.uidEmulationBusy,
                             onToggleUidEmulation = { enabled ->

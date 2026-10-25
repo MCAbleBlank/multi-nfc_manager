@@ -47,10 +47,10 @@
 
 ### UID 模拟（实验性）
 
-- 通过 Android NFC OEM 扩展 `NfcOemExtension.emulateNfcTechnologyATag()` 把保存的 4/7/10 字节 UID 交给 NFC 控制器，供读卡器读取。
+- Android 16 QPR2+：通过系统 NFC OEM 扩展 `NfcOemExtension.emulateNfcTechnologyATag()` 把保存的 4/7/10 字节 UID 交给控制器。
+- OnePlus Android 15：通过 `nfcvendorlib` 的 `setHceTypeAConfig()` 实验通道，需一次性 ADB 授权 `WRITE_SECURE_SETTINGS`。
 - 仅重现 UID，不复制 MIFARE 扇区、密钥或加密认证；与 HCE 互斥，开启时会先停止 HCE。
-- 需要 Android 16 QPR2（API 36.1）及以上，且厂商的 NFC 模块保留该扩展；详情页会显示检测结果。
-- 关闭 NFC、重启或进程结束后模拟状态可能丢失，需要重新开启。
+- 关闭 NFC、重启或进程结束后模拟状态可能丢失，需要重新开启。能力检测、授权命令与恢复入口统一在「设置 → NFC 能力与说明」。
 
 ### 其他
 
@@ -101,13 +101,13 @@
 | 模拟 NDEF Type 4 标签 | ✅ 支持（只读） |
 | 模拟 MIFARE Classic | ❌ Android 平台不支持第三方应用实现 |
 | 自定义 HCE 的 UID | ❌ HCE 路由下 UID 由控制器决定 |
-| 模拟 NFC-A UID（OEM 扩展） | ⚠️ 实验性，需 Android 16 QPR2+ 且厂商保留扩展 |
+| 模拟 NFC-A UID | ⚠️ 实验性：Android 16 QPR2+ OEM 扩展；OnePlus Android 15 vendor 通道 |
 | 息屏 / 后台模拟 | ⚠️ 受系统默认钱包与厂商策略控制 |
 
 具体说明：
 
 1. **HCE 只暴露 ISO-DEP（ISO 14443-4）通信。** MIFARE Classic 的认证、扇区读写和 UID 由 NFC 控制器固件处理，普通应用既不能呈现 MIFARE UID，也不能应答 crypto1 命令。因此本应用只能模拟标准 NDEF Type 4 标签，无法模拟 MIFARE Classic 门禁卡。
-2. **HCE 本身不能自定义 UID，UID 模拟走另一条实验性路径。** HCE 只暴露 ISO-DEP，UID 由 NFC 控制器决定。若系统提供 NFC OEM 扩展，应用可通过 `emulateNfcTechnologyATag()` 把保存的 UID 交给控制器；该路径需要 Android 16 QPR2+ 与厂商支持，且只重现 UID，不包含扇区或认证数据。门禁若额外校验密钥、滚动码或服务端状态，仍会拒绝。
+2. **HCE 本身不能自定义 UID，UID 模拟走另一条实验性路径。** HCE 只暴露 ISO-DEP，UID 由 NFC 控制器决定。Android 16 QPR2+ 可通过系统 NFC OEM 扩展、OnePlus Android 15 可通过 `nfcvendorlib` 把保存的 UID 交给控制器；两条路径都只重现 UID，不包含扇区或认证数据。门禁若额外校验密钥、滚动码或服务端状态，仍会拒绝。
 3. **前台优先，不等于系统级替换。** 本应用只会在可见时申请成为首选 HCE 服务；退到后台后仍由系统默认钱包决定路由。普通应用无法静默夺走系统默认钱包的地位。
 4. **读写都不会操作 eSE。** 应用不访问安全元件，也不包含任何绕过厂商限制、提权或修改 NFC 固件/HAL 的逻辑。
 5. **只保存元数据不足以复制门禁卡。** 门禁卡通常依赖扇区密钥、滚动码或服务端校验，仅复制 UID / NDEF 不能保证可用。
@@ -123,6 +123,8 @@
 - Android Build Tools 35.0.0（ARM64）
 - Gradle 8.14.3
 - 运行设备：Android 9（API 28）及以上，且支持 NFC
+- UID 模拟：Android 16 QPR2+ 的 OEM 扩展，或 OnePlus Android 15 + 一次性 ADB 授权：
+  `adb shell pm grant com.multinfc.manager android.permission.WRITE_SECURE_SETTINGS`
 
 ### 构建
 
@@ -184,11 +186,11 @@ gradle installDebug
 
 ### UID 模拟（实验性）
 
-1. 打开卡片详情，确认「UID 模拟（实验性）」显示设备支持。
-2. 打开开关并在警告对话框中确认；开启前 HCE 会自动停止。
-3. 再次关闭开关即可恢复控制器的默认配置。
+1. 打开卡片详情，开启「UID 模拟（实验性）」并在警告对话框中确认。
+2. OnePlus Android 15 首次使用前，在「设置 → NFC 能力与说明」复制 ADB 授权命令并执行；授权后无需重启。
+3. 再次关闭开关即恢复原始配置。若应用中断留下待恢复状态，可在同一设置页点击「恢复默认配置」。
 
-> 该功能只重现 UID。门禁若校验扇区密钥、滚动码或服务端状态，仍会拒绝；支持情况取决于系统版本、厂商 NFC 模块和读卡器。
+> 仅重现 UID。门禁若校验扇区密钥、滚动码或服务端状态，仍会拒绝；兼容性取决于系统版本、固件和读卡器。
 
 ## 项目结构
 
@@ -207,13 +209,14 @@ app/src/main/
 │   │   ├── CardWriter.kt              NDEF / MIFARE 写回与写入校验
 │   │   ├── NdefHostApduService.kt     HCE NDEF Type 4 卡模拟
 │   │   ├── UidCodec.kt                4/7/10 字节 UID 解析
-│   │   └── UidEmulation.kt            NFC-A UID 模拟（OEM 扩展）
+│   │   ├── UidEmulation.kt            UID 模拟调度（OEM / vendor）
+│   │   └── OnePlusUidEmulation.kt     OnePlus Android 15 vendor 通道
 │   └── ui/
 │       ├── NfcApp.kt                  页面导航与全局状态
 │       ├── CardViewModel.kt           卡片、扫描、写入、HCE 状态
 │       ├── Formatters.kt              时间格式化
 │       ├── components/                卡片视觉、图标、陀螺仪倾斜
-│       ├── screens/                   首页、详情、编辑、扫描、设置
+│       ├── screens/                   首页、详情、编辑、扫描、设置、NFC 说明
 │       └── theme/                     Material 3 主题、颜色、字体
 └── res/
     ├── xml/apduservice.xml            HCE AID 注册（NDEF Type 4）
@@ -236,6 +239,7 @@ app/src/main/
 - 应用未声明 `INTERNET` 权限。
 - 卡片集合（JSON）与当前模拟卡 UID 保存在 `SharedPreferences` 的 `nfc_card_pocket` 中；界面设置单独保存在 `nfc_card_settings` 中。
 - 卸载应用会一并删除本地保存的卡片数据。
+- OnePlus 实验通道在获得 `WRITE_SECURE_SETTINGS` 后只读写 `hce_access_card_*` 系统 HCE 配置，用于激活与恢复；不读取其他设置或个人信息。
 - 卡模拟服务在每次 APDU 请求时读取本地数据，不会把卡片内容发送到应用外部。
 
 ## 技术栈
@@ -254,8 +258,9 @@ app/src/main/
 
 ## 已知限制
 
-- 卡模拟只支持只读 NDEF Type 4；UID 模拟为实验性功能，且仅限提供 NFC OEM 扩展的设备，不支持 MIFARE Classic 或银行卡 APDU。
-- UID 模拟未实现 raw NCI / 厂商私有 HCE 路径，因此 Android 15 及更早系统、或裁剪了 OEM 扩展的固件上不可用。
+- 卡模拟只支持只读 NDEF Type 4；UID 模拟为实验性功能，不支持 MIFARE Classic 或银行卡 APDU。
+- UID 模拟的通用 Android 15 raw NCI 路径未实现；Android 15 仅限 OnePlus `nfcvendorlib` 通道，且需要 ADB 授权。其他厂商/系统版本需 Android 16 QPR2+ 的 OEM 扩展。
+- OnePlus vendor 通道属于未在官方固件上验证的实验实现；首次使用前会保存原始 HCE 配置，停止时按快照恢复。若恢复失败，设置页会保留「待恢复」入口。
 - UID 模拟在关闭 NFC、重启或进程结束后不会自动恢复，应用也不会在后台自动接管 NFC。
 - HCE 在后台的路由由系统默认钱包决定，应用无法强制覆盖。
 - MIFARE Classic 的读取依赖密钥字典；未知密钥的扇区无法读取或写入，除非手动填写正确密钥。

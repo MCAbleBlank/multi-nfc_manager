@@ -30,9 +30,15 @@ import java.lang.reflect.Method
  */
 object UidEmulation {
 
+    enum class Path { OEM, ONEPLUS_VENDOR }
+
     data class Capability(
         val supported: Boolean,
+        val path: Path? = null,
         val reason: String? = null,
+        val needsSecureSettings: Boolean = false,
+        val secureSettingsGranted: Boolean = true,
+        val pendingRestore: Boolean = false,
     )
 
     sealed interface Outcome {
@@ -88,13 +94,42 @@ object UidEmulation {
     )
 
     /** Checks the API itself; an OEM may backport it without changing SDK_INT. */
-    fun inspect(context: Context): Capability = try {
-        resolveApi(context)
-        Capability(supported = true)
-    } catch (failure: UnsupportedOperationException) {
-        Capability(supported = false, reason = failure.message)
-    } catch (failure: Throwable) {
-        Capability(supported = false, reason = "无法访问 NFC OEM 扩展：${describe(failure)}")
+    fun inspect(context: Context): Capability {
+        val oemFailure: String? = try {
+            resolveApi(context)
+            null
+        } catch (failure: UnsupportedOperationException) {
+            failure.message
+        } catch (failure: Throwable) {
+            "无法访问 NFC OEM 扩展：${describe(failure)}"
+        }
+        if (oemFailure == null) {
+            return Capability(supported = true, path = Path.OEM)
+        }
+
+        val vendor = OnePlusUidEmulation.probe(context)
+        if (vendor.available) {
+            return Capability(
+                supported = true,
+                path = Path.ONEPLUS_VENDOR,
+                needsSecureSettings = true,
+                secureSettingsGranted = vendor.secureSettingsGranted,
+                pendingRestore = vendor.pendingRestore,
+            )
+        }
+
+        val reason = buildString {
+            append(oemFailure)
+            vendor.reason?.let {
+                append("；")
+                append(it)
+            }
+        }
+        return Capability(
+            supported = false,
+            reason = reason,
+            pendingRestore = vendor.pendingRestore,
+        )
     }
 
     /**
@@ -106,7 +141,28 @@ object UidEmulation {
         if (uid.size !in UidCodec.supportedByteLengths) {
             return Outcome.Failure("UID 必须为 4、7 或 10 字节")
         }
+        val capability = inspect(context)
+        if (!capability.supported) {
+            return Outcome.Failure(capability.reason ?: "当前设备不支持 NFC-A UID 模拟")
+        }
+        if (capability.path == Path.ONEPLUS_VENDOR) {
+            if (!capability.secureSettingsGranted) {
+                return Outcome.Failure(
+                    "需要 WRITE_SECURE_SETTINGS：adb shell pm grant " +
+                        context.packageName +
+                        " android.permission.WRITE_SECURE_SETTINGS"
+                )
+            }
+            return if (enable) {
+                OnePlusUidEmulation.activate(context, uid)
+            } else {
+                OnePlusUidEmulation.deactivate(context)
+            }
+        }
+        return setOemEnabled(context, uid, enable)
+    }
 
+    private fun setOemEnabled(context: Context, uid: ByteArray, enable: Boolean): Outcome {
         val api = try {
             resolveApi(context)
         } catch (failure: UnsupportedOperationException) {
@@ -143,10 +199,19 @@ object UidEmulation {
     }
 
     /**
-     * Restores the controller's default configuration. The platform expects a
-     * disabled request with a 4-byte placeholder UID.
+     * Restores the controller's default configuration. Prefers the pending
+     * OnePlus snapshot when one exists; otherwise restores the OEM defaults.
      */
-    fun disable(context: Context): Outcome = setEnabled(context, ByteArray(4), enable = false)
+    fun disable(context: Context): Outcome {
+        if (OnePlusUidEmulation.hasPendingRestore(context)) {
+            return OnePlusUidEmulation.deactivate(context)
+        }
+        return if (inspect(context).path == Path.ONEPLUS_VENDOR) {
+            OnePlusUidEmulation.deactivate(context)
+        } else {
+            setOemEnabled(context, ByteArray(4), enable = false)
+        }
+    }
 
     private fun profileForDevice(): Profile =
         if ("google".equals(Build.MANUFACTURER, ignoreCase = true)) {

@@ -385,6 +385,9 @@ class CardViewModel(application: Application) : AndroidViewModel(application) {
                 val outcome = withContext(Dispatchers.IO) {
                     UidEmulation.disable(application)
                 }
+                uidEmulationCapability = withContext(Dispatchers.IO) {
+                    UidEmulation.inspect(application)
+                }
                 uidEmulationBusy = false
                 when (outcome) {
                     UidEmulation.Outcome.Success -> {
@@ -414,12 +417,6 @@ class CardViewModel(application: Application) : AndroidViewModel(application) {
             _messages.tryEmit("请先打开 NFC")
             return
         }
-        uidEmulationCapability?.let { capability ->
-            if (!capability.supported) {
-                _messages.tryEmit(capability.reason ?: "当前设备不支持 UID 模拟")
-                return
-            }
-        }
         val bytes = UidCodec.parse(card.uid)
         if (bytes == null) {
             _messages.tryEmit("这张卡的 UID 长度不支持模拟（仅支持 4/7/10 字节）")
@@ -432,8 +429,31 @@ class CardViewModel(application: Application) : AndroidViewModel(application) {
 
         uidEmulationBusy = true
         viewModelScope.launch {
+            // Re-probe on every activation: WRITE_SECURE_SETTINGS is granted
+            // over ADB and must be picked up without restarting the app.
+            val capability = withContext(Dispatchers.IO) {
+                UidEmulation.inspect(application)
+            }
+            uidEmulationCapability = capability
+            if (!capability.supported) {
+                uidEmulationBusy = false
+                _messages.tryEmit(capability.reason ?: "当前设备不支持 UID 模拟")
+                return@launch
+            }
+            if (capability.needsSecureSettings && !capability.secureSettingsGranted) {
+                uidEmulationBusy = false
+                _messages.tryEmit(
+                    "需要授权：adb shell pm grant " + application.packageName +
+                        " android.permission.WRITE_SECURE_SETTINGS"
+                )
+                return@launch
+            }
+
             val outcome = withContext(Dispatchers.IO) {
                 UidEmulation.setEnabled(application, bytes, true)
+            }
+            uidEmulationCapability = withContext(Dispatchers.IO) {
+                UidEmulation.inspect(application)
             }
             uidEmulationBusy = false
             when (outcome) {
@@ -452,6 +472,53 @@ class CardViewModel(application: Application) : AndroidViewModel(application) {
 
                 is UidEmulation.Outcome.Failure -> _messages.tryEmit(
                     "UID 模拟失败：${outcome.message}"
+                )
+            }
+        }
+    }
+
+    fun refreshUidEmulationCapability() {
+        val application = getApplication<Application>()
+        viewModelScope.launch {
+            uidEmulationCapability = withContext(Dispatchers.IO) {
+                UidEmulation.inspect(application)
+            }
+        }
+    }
+
+    /**
+     * Restores the vendor/OEM configuration captured before an experimental
+     * activation. Safe to call when no snapshot is pending.
+     */
+    fun restoreUidEmulationDefaults() {
+        if (uidEmulationBusy) return
+        val application = getApplication<Application>()
+        uidEmulationBusy = true
+        viewModelScope.launch {
+            val outcome = withContext(Dispatchers.IO) {
+                UidEmulation.disable(application)
+            }
+            uidEmulationCapability = withContext(Dispatchers.IO) {
+                UidEmulation.inspect(application)
+            }
+            uidEmulationBusy = false
+            when (outcome) {
+                UidEmulation.Outcome.Success -> {
+                    uidEmulationUid = null
+                    _messages.tryEmit("已恢复 NFC 默认配置")
+                }
+
+                UidEmulation.Outcome.NfcDisabled -> {
+                    uidEmulationUid = null
+                    _messages.tryEmit("NFC 已关闭，无需恢复")
+                }
+
+                UidEmulation.Outcome.Rejected -> _messages.tryEmit(
+                    "控制器拒绝恢复默认配置"
+                )
+
+                is UidEmulation.Outcome.Failure -> _messages.tryEmit(
+                    "恢复失败：${outcome.message}"
                 )
             }
         }

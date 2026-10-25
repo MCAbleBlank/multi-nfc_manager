@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -45,6 +46,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.multinfc.manager.data.AppSettings
 import com.multinfc.manager.data.CardStyle
+import com.multinfc.manager.nfc.UidEmulation
 import com.multinfc.manager.ui.components.AppIcons
 import com.multinfc.manager.ui.components.hasTiltSensor
 
@@ -58,6 +60,8 @@ fun SettingsScreen(
     onHaptics: (Boolean) -> Unit,
     onTilt: (Boolean) -> Unit,
     onEnhancedEffects: (Boolean) -> Unit,
+    uidEmulationCapability: UidEmulation.Capability?,
+    onOpenNfcInfo: () -> Unit,
 ) {
     val context = LocalContext.current
     val tiltAvailable = remember(context) { hasTiltSensor(context) }
@@ -147,6 +151,57 @@ fun SettingsScreen(
                 }
             }
 
+            item { SectionTitle("NFC", Modifier.padding(top = 10.dp)) }
+
+            item {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(24.dp))
+                        .clickable(onClick = onOpenNfcInfo),
+                    shape = RoundedCornerShape(24.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                        ) {
+                            Icon(
+                                imageVector = AppIcons.Nfc,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier
+                                    .padding(10.dp)
+                                    .size(22.dp),
+                            )
+                        }
+                        Spacer(Modifier.width(14.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                text = "NFC 能力与说明",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Spacer(Modifier.height(3.dp))
+                            Text(
+                                text = capabilitySummary(uidEmulationCapability),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+
             item { SectionTitle("关于", Modifier.padding(top = 10.dp)) }
 
             item {
@@ -190,8 +245,7 @@ fun SettingsScreen(
                             Spacer(Modifier.height(6.dp))
                             Text(
                                 text = "卡片、NDEF 内容与 MIFARE 扇区数据仅保存在本机。" +
-                                    "卡模拟受 Android 平台限制，只能模拟 ISO-DEP / NDEF " +
-                                    "Type 4 标签，无法模拟 MIFARE Classic 的 UID 与加密扇区。",
+                                    "卡模拟能力与限制见上方「NFC 能力与说明」。",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -453,4 +507,14 @@ private fun SettingDivider() {
         modifier = Modifier.padding(horizontal = 16.dp),
         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
     )
+}
+
+private fun capabilitySummary(capability: UidEmulation.Capability?): String = when {
+    capability == null -> "正在检测 UID 模拟支持…"
+    capability.supported && capability.path == UidEmulation.Path.OEM ->
+        "UID：OEM 扩展 · HCE：NDEF Type 4"
+    capability.supported && capability.path == UidEmulation.Path.ONEPLUS_VENDOR ->
+        "UID：OnePlus vendor（实验）" +
+            if (capability.secureSettingsGranted) "" else " · 未授权"
+    else -> "UID 模拟不可用 · HCE：NDEF Type 4"
 }

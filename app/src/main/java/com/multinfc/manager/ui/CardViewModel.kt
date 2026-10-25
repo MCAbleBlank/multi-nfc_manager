@@ -1,5 +1,6 @@
 package com.multinfc.manager.ui
 
+import android.app.Activity
 import android.app.Application
 import android.nfc.NdefMessage
 import android.nfc.Tag
@@ -373,7 +374,7 @@ class CardViewModel(application: Application) : AndroidViewModel(application) {
      * main thread. Enabling UID emulation stops HCE first because the OEM
      * extension may disable regular card-emulation services.
      */
-    fun setUidEmulation(uid: String, enabled: Boolean) {
+    fun setUidEmulation(uid: String, enabled: Boolean, activity: Activity? = null) {
         if (uidEmulationBusy) return
         val application = getApplication<Application>()
 
@@ -383,7 +384,7 @@ class CardViewModel(application: Application) : AndroidViewModel(application) {
             uidEmulationBusy = true
             viewModelScope.launch {
                 val outcome = withContext(Dispatchers.IO) {
-                    UidEmulation.disable(application)
+                    UidEmulation.disable(application, activity)
                 }
                 uidEmulationCapability = withContext(Dispatchers.IO) {
                     UidEmulation.inspect(application)
@@ -450,7 +451,7 @@ class CardViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             val outcome = withContext(Dispatchers.IO) {
-                UidEmulation.setEnabled(application, bytes, true)
+                UidEmulation.setEnabled(application, bytes, true, activity)
             }
             uidEmulationCapability = withContext(Dispatchers.IO) {
                 UidEmulation.inspect(application)
@@ -490,13 +491,13 @@ class CardViewModel(application: Application) : AndroidViewModel(application) {
      * Restores the vendor/OEM configuration captured before an experimental
      * activation. Safe to call when no snapshot is pending.
      */
-    fun restoreUidEmulationDefaults() {
+    fun restoreUidEmulationDefaults(activity: Activity? = null) {
         if (uidEmulationBusy) return
         val application = getApplication<Application>()
         uidEmulationBusy = true
         viewModelScope.launch {
             val outcome = withContext(Dispatchers.IO) {
-                UidEmulation.disable(application)
+                UidEmulation.disable(application, activity)
             }
             uidEmulationCapability = withContext(Dispatchers.IO) {
                 UidEmulation.inspect(application)

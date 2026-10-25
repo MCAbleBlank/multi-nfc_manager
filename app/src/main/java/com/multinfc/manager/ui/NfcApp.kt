@@ -1,5 +1,6 @@
 package com.multinfc.manager.ui
 
+import android.app.Activity
 import android.content.Intent
 import android.provider.Settings
 import android.widget.Toast
@@ -50,6 +51,7 @@ fun NfcApp(
     var query by rememberSaveable { mutableStateOf("") }
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
+    val activity = context as? Activity
 
     // Shared with HomeScreen so the wheel keeps its position while the user
     // opens a card and comes back, and so volume keys drive the same animation.
@@ -167,7 +169,9 @@ fun NfcApp(
                     busy = viewModel.uidEmulationBusy,
                     onBack = { nfcInfoOpen = false },
                     onRefresh = viewModel::refreshUidEmulationCapability,
-                    onRestoreDefaults = viewModel::restoreUidEmulationDefaults,
+                    onRestoreDefaults = {
+                        viewModel.restoreUidEmulationDefaults(activity)
+                    },
                 )
             } else {
                 SettingsScreen(
@@ -304,7 +308,7 @@ fun NfcApp(
                             uidEmulationEligible = UidCodec.parse(card.uid) != null,
                             uidEmulationBusy = viewModel.uidEmulationBusy,
                             onToggleUidEmulation = { enabled ->
-                                viewModel.setUidEmulation(card.uid, enabled)
+                                viewModel.setUidEmulation(card.uid, enabled, activity)
                             },
                             onEdit = { editingUid = card.uid },
                             onWriteNdef = { beginWrite(WriteMode.Ndef) },

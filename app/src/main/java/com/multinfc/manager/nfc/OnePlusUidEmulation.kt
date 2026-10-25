@@ -79,6 +79,14 @@ object OnePlusUidEmulation {
                 pendingRestore = pending,
             )
         }
+        if (isCnRegion()) {
+            return Probe(
+                available = false,
+                reason = "国行固件禁用了 OnePlus vendor HCE（isOverSeaRegion=false）",
+                secureSettingsGranted = granted,
+                pendingRestore = pending,
+            )
+        }
         return try {
             resolveApi(context)
             Probe(
@@ -119,6 +127,16 @@ object OnePlusUidEmulation {
             ByteArray::class.java,
         )
     }.isSuccess
+
+    /** CN firmware hard-rejects setHceTypeAConfig; do not advertise the path. */
+    private fun isCnRegion(): Boolean = runCatching {
+        val systemProperties = Class.forName("android.os.SystemProperties")
+        val get = systemProperties.getMethod("get", String::class.java)
+        "CN".equals(
+            get.invoke(null, "persist.sys.oplus.region") as? String,
+            ignoreCase = true,
+        )
+    }.getOrDefault(false)
 
     fun activate(context: Context, uid: ByteArray): UidEmulation.Outcome {
         if (uid.size !in UidCodec.supportedByteLengths) {

@@ -1,5 +1,6 @@
 package com.multinfc.manager.nfc
 
+import android.app.Activity
 import android.content.Context
 import android.nfc.NfcAdapter
 import android.os.Build
@@ -7,30 +8,29 @@ import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Method
 
 /**
- * Experimental NFC-A UID emulation through Android's OEM extension API.
+ * Experimental NFC-A UID emulation with three activation paths:
  *
- * The only path implemented here is the platform API
- * `NfcOemExtension.emulateNfcTechnologyATag(...)`, first shipped with
- * Android 16 QPR2 (API 36.1) and only present when the OEM keeps the
- * extension in its NFC module. It changes the UID the controller presents
- * while a tag is emulated; card memory, MIFARE keys, authentication and
- * application data are *not* reproduced.
+ *  - [Path.OEM]: platform `NfcOemExtension.emulateNfcTechnologyATag`,
+ *    Android 16 QPR2+ (API 36.1) when the OEM keeps the extension.
+ *  - [Path.RAW_NCI]: hidden `NfcAdapter.sendVendorNciMessage` on OnePlus
+ *    Android 15 (the vendor path is blocked on CN firmware). Requires
+ *    `WRITE_SECURE_SETTINGS`.
+ *  - [Path.ONEPLUS_VENDOR]: `nfcvendorlib.setHceTypeAConfig`, used when raw
+ *    NCI is unavailable.
  *
- * Raw NCI and vendor HCE paths (as used by Emula for older devices) are
- * deliberately not implemented: they require `WRITE_SECURE_SETTINGS`,
- * hidden NCI callbacks and firmware-specific snapshots, and writing an
- * unverified controller configuration can leave NFC in a broken state.
+ * Only the UID is reproduced; card memory, MIFARE keys, authentication and
+ * application data are *not* copied. Raw/vendor snapshots are written before
+ * activation and restored on stop.
  *
- * Parameter profiles and status codes follow AOSP
- * `packages/modules/Nfc/.../NfcOemExtension.java` and the behaviour observed
- * by the GPL-3.0 Emula project; no Emula source code is copied here.
+ * Behaviour was verified against AOSP `NfcOemExtension` / `NfcService` and
+ * the GPL-3.0 Emula project; no Emula source code is copied here.
  *
- * The API is hidden from the SDK, so it is reached through reflection. Call
+ * The APIs are hidden or vendor-specific, so reflection is used. Call
  * [setEnabled] and [disable] off the main thread.
  */
 object UidEmulation {
 
-    enum class Path { OEM, ONEPLUS_VENDOR }
+    enum class Path { OEM, RAW_NCI, ONEPLUS_VENDOR }
 
     data class Capability(
         val supported: Boolean,
@@ -107,6 +107,20 @@ object UidEmulation {
             return Capability(supported = true, path = Path.OEM)
         }
 
+        // Raw NCI is the Android 15 path. It is checked before the vendor
+        // path because CN OnePlus firmware rejects setHceTypeAConfig.
+        val raw = RawNciUidEmulation.probe(context)
+        if (raw.available) {
+            return Capability(
+                supported = true,
+                path = Path.RAW_NCI,
+                needsSecureSettings = true,
+                secureSettingsGranted = raw.secureSettingsGranted,
+                pendingRestore = raw.pendingRestore ||
+                    OnePlusUidEmulation.hasPendingRestore(context),
+            )
+        }
+
         val vendor = OnePlusUidEmulation.probe(context)
         if (vendor.available) {
             return Capability(
@@ -120,6 +134,10 @@ object UidEmulation {
 
         val reason = buildString {
             append(oemFailure)
+            raw.reason?.let {
+                append("；")
+                append(it)
+            }
             vendor.reason?.let {
                 append("；")
                 append(it)
@@ -128,7 +146,8 @@ object UidEmulation {
         return Capability(
             supported = false,
             reason = reason,
-            pendingRestore = vendor.pendingRestore,
+            pendingRestore = raw.pendingRestore ||
+                OnePlusUidEmulation.hasPendingRestore(context),
         )
     }
 
@@ -137,7 +156,12 @@ object UidEmulation {
      * 10 bytes. Disabling ignores the UID content but still needs a
      * well-formed array, so callers should use [disable] instead.
      */
-    fun setEnabled(context: Context, uid: ByteArray, enable: Boolean): Outcome {
+    fun setEnabled(
+        context: Context,
+        uid: ByteArray,
+        enable: Boolean,
+        activity: Activity? = null,
+    ): Outcome {
         if (uid.size !in UidCodec.supportedByteLengths) {
             return Outcome.Failure("UID 必须为 4、7 或 10 字节")
         }
@@ -145,21 +169,28 @@ object UidEmulation {
         if (!capability.supported) {
             return Outcome.Failure(capability.reason ?: "当前设备不支持 NFC-A UID 模拟")
         }
-        if (capability.path == Path.ONEPLUS_VENDOR) {
-            if (!capability.secureSettingsGranted) {
-                return Outcome.Failure(
-                    "需要 WRITE_SECURE_SETTINGS：adb shell pm grant " +
-                        context.packageName +
-                        " android.permission.WRITE_SECURE_SETTINGS"
-                )
+        if (capability.needsSecureSettings && !capability.secureSettingsGranted) {
+            return Outcome.Failure(
+                "需要 WRITE_SECURE_SETTINGS：adb shell pm grant " +
+                    context.packageName +
+                    " android.permission.WRITE_SECURE_SETTINGS"
+            )
+        }
+        return when (capability.path) {
+            Path.RAW_NCI -> if (enable) {
+                RawNciUidEmulation.activate(context, uid, activity)
+            } else {
+                RawNciUidEmulation.deactivate(context, activity)
             }
-            return if (enable) {
+
+            Path.ONEPLUS_VENDOR -> if (enable) {
                 OnePlusUidEmulation.activate(context, uid)
             } else {
                 OnePlusUidEmulation.deactivate(context)
             }
+
+            else -> setOemEnabled(context, uid, enable)
         }
-        return setOemEnabled(context, uid, enable)
     }
 
     private fun setOemEnabled(context: Context, uid: ByteArray, enable: Boolean): Outcome {
@@ -199,17 +230,20 @@ object UidEmulation {
     }
 
     /**
-     * Restores the controller's default configuration. Prefers the pending
-     * OnePlus snapshot when one exists; otherwise restores the OEM defaults.
+     * Restores the configuration captured before activation. Raw/vendor
+     * snapshots take precedence; otherwise the OEM defaults are restored.
      */
-    fun disable(context: Context): Outcome {
+    fun disable(context: Context, activity: Activity? = null): Outcome {
+        if (RawNciUidEmulation.hasPendingRestore(context)) {
+            return RawNciUidEmulation.deactivate(context, activity)
+        }
         if (OnePlusUidEmulation.hasPendingRestore(context)) {
             return OnePlusUidEmulation.deactivate(context)
         }
-        return if (inspect(context).path == Path.ONEPLUS_VENDOR) {
-            OnePlusUidEmulation.deactivate(context)
-        } else {
-            setOemEnabled(context, ByteArray(4), enable = false)
+        return when (inspect(context).path) {
+            Path.RAW_NCI -> RawNciUidEmulation.deactivate(context, activity)
+            Path.ONEPLUS_VENDOR -> OnePlusUidEmulation.deactivate(context)
+            else -> setOemEnabled(context, ByteArray(4), enable = false)
         }
     }
 

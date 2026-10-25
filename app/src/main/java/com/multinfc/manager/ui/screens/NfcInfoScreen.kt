@@ -54,6 +54,7 @@ fun NfcInfoScreen(
     val context = LocalContext.current
     val pathLabel = when (capability?.path) {
         UidEmulation.Path.OEM -> "Android OEM 扩展"
+        UidEmulation.Path.RAW_NCI -> "raw NCI（Android 15 实验）"
         UidEmulation.Path.ONEPLUS_VENDOR -> "OnePlus vendor HCE（Android 15 实验）"
         null -> if (capability == null) "正在检测…" else "不可用"
     }
@@ -156,7 +157,7 @@ fun NfcInfoScreen(
                 InfoCard(title = "UID 模拟（实验性）") {
                     Bullet("只向读卡器呈现 UID，不复制扇区数据、密钥或认证过程。")
                     Bullet("支持 4 / 7 / 10 字节 UID，与 HCE 互斥。")
-                    Bullet("Android 16 QPR2+ 使用系统 OEM 扩展；OnePlus Android 15 使用 vendor 通道。")
+                    Bullet("Android 16 QPR2+ 使用 OEM 扩展；OnePlus Android 15 使用 raw NCI（国行 vendor 通道被系统禁用）。")
                     Bullet("关闭 NFC、重启或进程结束后可能丢失，需要重新开启。")
                 }
             }
@@ -165,7 +166,7 @@ fun NfcInfoScreen(
                 InfoCard(title = "使用边界") {
                     Bullet("仅对你有权使用的卡片启用模拟。")
                     Bullet("依赖扇区密钥、滚动码或服务端校验的门禁仍可能拒绝。")
-                    Bullet("实验通道会先保存原始配置，停止时按快照恢复。")
+                    Bullet("实验通道会尽量保存原始配置；无法读取完整快照时，停止会恢复控制器默认值。")
                 }
             }
         }

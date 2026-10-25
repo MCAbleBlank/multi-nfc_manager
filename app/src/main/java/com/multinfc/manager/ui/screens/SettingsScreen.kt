@@ -513,6 +513,9 @@ private fun capabilitySummary(capability: UidEmulation.Capability?): String = wh
     capability == null -> "正在检测 UID 模拟支持…"
     capability.supported && capability.path == UidEmulation.Path.OEM ->
         "UID：OEM 扩展 · HCE：NDEF Type 4"
+    capability.supported && capability.path == UidEmulation.Path.RAW_NCI ->
+        "UID：raw NCI（Android 15 实验）" +
+            if (capability.secureSettingsGranted) "" else " · 未授权"
     capability.supported && capability.path == UidEmulation.Path.ONEPLUS_VENDOR ->
         "UID：OnePlus vendor（实验）" +
             if (capability.secureSettingsGranted) "" else " · 未授权"

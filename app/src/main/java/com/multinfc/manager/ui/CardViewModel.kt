@@ -19,6 +19,8 @@ import com.multinfc.manager.data.NfcCard
 import com.multinfc.manager.data.SettingsRepository
 import com.multinfc.manager.nfc.CardWriter
 import com.multinfc.manager.nfc.NfcParser
+import com.multinfc.manager.nfc.UidCodec
+import com.multinfc.manager.nfc.UidEmulation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -73,6 +75,20 @@ class CardViewModel(application: Application) : AndroidViewModel(application) {
     var emulatedUid by mutableStateOf(repository.loadEmulatedUid())
         private set
 
+    /**
+     * Result of probing the hidden NFC OEM extension. Null while the
+     * reflective check is still running.
+     */
+    var uidEmulationCapability by mutableStateOf<UidEmulation.Capability?>(null)
+        private set
+
+    /** UID currently presented by the NFC controller, or null when stopped. */
+    var uidEmulationUid by mutableStateOf<String?>(null)
+        private set
+
+    var uidEmulationBusy by mutableStateOf(false)
+        private set
+
     private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val messages: SharedFlow<String> = _messages
 
@@ -91,8 +107,21 @@ class CardViewModel(application: Application) : AndroidViewModel(application) {
     private var lastReadUid: String? = null
     private var lastReadAt = 0L
 
+    init {
+        viewModelScope.launch {
+            uidEmulationCapability = withContext(Dispatchers.IO) {
+                UidEmulation.inspect(getApplication())
+            }
+        }
+    }
+
     fun onNfcStateChanged(enabled: Boolean) {
         nfcEnabled = enabled
+        if (!enabled && uidEmulationUid != null) {
+            // Disabling NFC resets the controller, so the presented UID is gone.
+            uidEmulationUid = null
+            _messages.tryEmit("NFC 已关闭，UID 模拟已停止")
+        }
     }
 
     fun setCardStyle(style: CardStyle) = updateSettings { it.copy(cardStyle = style) }
@@ -248,6 +277,11 @@ class CardViewModel(application: Application) : AndroidViewModel(application) {
                     } + updated
                     ).sortedByDescending { it.scannedAt }
                 repository.save(cards)
+                if (newUid != null && uidEmulationUid == card.uid) {
+                    // The saved card now has a different UID; the controller is
+                    // still presenting the old one, so stop rather than lie.
+                    setUidEmulation(card.uid, enabled = false)
+                }
             }
 
             writeInProgress = false
@@ -313,6 +347,10 @@ class CardViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setEmulation(uid: String, enabled: Boolean) {
+        if (enabled && uidEmulationUid != null) {
+            _messages.tryEmit("请先关闭 UID 模拟，再启用 HCE")
+            return
+        }
         if (!enabled) {
             emulatedUid = null
             repository.saveEmulatedUid(null)
@@ -329,6 +367,96 @@ class CardViewModel(application: Application) : AndroidViewModel(application) {
         _messages.tryEmit("正在模拟「${card.displayName}」· NDEF")
     }
 
+    /**
+     * Starts or stops experimental NFC-A UID emulation. The reflective OEM
+     * call runs on the IO dispatcher; Compose state is only changed from the
+     * main thread. Enabling UID emulation stops HCE first because the OEM
+     * extension may disable regular card-emulation services.
+     */
+    fun setUidEmulation(uid: String, enabled: Boolean) {
+        if (uidEmulationBusy) return
+        val application = getApplication<Application>()
+
+        if (!enabled) {
+            val current = uidEmulationUid ?: return
+            if (current != uid) return
+            uidEmulationBusy = true
+            viewModelScope.launch {
+                val outcome = withContext(Dispatchers.IO) {
+                    UidEmulation.disable(application)
+                }
+                uidEmulationBusy = false
+                when (outcome) {
+                    UidEmulation.Outcome.Success -> {
+                        uidEmulationUid = null
+                        _messages.tryEmit("已停止 UID 模拟")
+                    }
+
+                    UidEmulation.Outcome.NfcDisabled -> {
+                        uidEmulationUid = null
+                        _messages.tryEmit("NFC 已关闭，UID 模拟已停止")
+                    }
+
+                    UidEmulation.Outcome.Rejected -> _messages.tryEmit(
+                        "控制器拒绝停止 UID 模拟，请关闭并重新打开 NFC"
+                    )
+
+                    is UidEmulation.Outcome.Failure -> _messages.tryEmit(
+                        "停止 UID 模拟失败：${outcome.message}"
+                    )
+                }
+            }
+            return
+        }
+
+        val card = cards.firstOrNull { it.uid == uid } ?: return
+        if (!nfcEnabled) {
+            _messages.tryEmit("请先打开 NFC")
+            return
+        }
+        uidEmulationCapability?.let { capability ->
+            if (!capability.supported) {
+                _messages.tryEmit(capability.reason ?: "当前设备不支持 UID 模拟")
+                return
+            }
+        }
+        val bytes = UidCodec.parse(card.uid)
+        if (bytes == null) {
+            _messages.tryEmit("这张卡的 UID 长度不支持模拟（仅支持 4/7/10 字节）")
+            return
+        }
+        if (emulatedUid != null) {
+            emulatedUid = null
+            repository.saveEmulatedUid(null)
+        }
+
+        uidEmulationBusy = true
+        viewModelScope.launch {
+            val outcome = withContext(Dispatchers.IO) {
+                UidEmulation.setEnabled(application, bytes, true)
+            }
+            uidEmulationBusy = false
+            when (outcome) {
+                UidEmulation.Outcome.Success -> {
+                    uidEmulationUid = card.uid
+                    _messages.tryEmit("正在模拟「${card.displayName}」· UID")
+                }
+
+                UidEmulation.Outcome.NfcDisabled -> _messages.tryEmit(
+                    "NFC 已关闭，无法开始 UID 模拟"
+                )
+
+                UidEmulation.Outcome.Rejected -> _messages.tryEmit(
+                    "NFC 控制器拒绝了 UID 配置，设备或固件可能不支持"
+                )
+
+                is UidEmulation.Outcome.Failure -> _messages.tryEmit(
+                    "UID 模拟失败：${outcome.message}"
+                )
+            }
+        }
+    }
+
     fun delete(uid: String) {
         val card = cards.firstOrNull { it.uid == uid } ?: return
         cards = cards.filterNot { it.uid == uid }
@@ -336,6 +464,9 @@ class CardViewModel(application: Application) : AndroidViewModel(application) {
         if (emulatedUid == uid) {
             emulatedUid = null
             repository.saveEmulatedUid(null)
+        }
+        if (uidEmulationUid == uid) {
+            setUidEmulation(uid, enabled = false)
         }
         _messages.tryEmit("已删除「${card.displayName}」")
     }

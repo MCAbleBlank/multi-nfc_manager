@@ -26,6 +26,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.IntOffset
+import com.multinfc.manager.nfc.UidCodec
 import com.multinfc.manager.ui.CardViewModel.WriteMode
 import com.multinfc.manager.ui.screens.CardDetailScreen
 import com.multinfc.manager.ui.screens.CardEditorScreen
@@ -271,6 +272,16 @@ fun NfcApp(
                             emulated = viewModel.emulatedUid == card.uid,
                             onToggleEmulation = { enabled ->
                                 viewModel.setEmulation(card.uid, enabled)
+                            },
+                            uidEmulationActive = viewModel.uidEmulationUid == card.uid,
+                            uidEmulationChecking = viewModel.uidEmulationCapability == null,
+                            uidEmulationSupported =
+                                viewModel.uidEmulationCapability?.supported == true,
+                            uidEmulationReason = viewModel.uidEmulationCapability?.reason,
+                            uidEmulationEligible = UidCodec.parse(card.uid) != null,
+                            uidEmulationBusy = viewModel.uidEmulationBusy,
+                            onToggleUidEmulation = { enabled ->
+                                viewModel.setUidEmulation(card.uid, enabled)
                             },
                             onEdit = { editingUid = card.uid },
                             onWriteNdef = { beginWrite(WriteMode.Ndef) },

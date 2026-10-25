@@ -43,4 +43,6 @@ dependencies {
     implementation("androidx.compose.foundation:foundation:1.6.1")
     implementation("androidx.compose.animation:animation:1.6.1")
     implementation("androidx.compose.material3:material3:1.2.0")
+
+    testImplementation("junit:junit:4.13.2")
 }

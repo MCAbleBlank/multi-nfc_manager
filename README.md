@@ -45,6 +45,13 @@
 - 模拟服务每次收到 APDU 都从本地存储读取当前卡片，切换或编辑内容立即生效。
 - 支持 `SELECT`（按 AID / 文件 ID）与 `READ BINARY`，提供标准的 Capability Container 和 NDEF 文件。
 
+### UID 模拟（实验性）
+
+- 通过 Android NFC OEM 扩展 `NfcOemExtension.emulateNfcTechnologyATag()` 把保存的 4/7/10 字节 UID 交给 NFC 控制器，供读卡器读取。
+- 仅重现 UID，不复制 MIFARE 扇区、密钥或加密认证；与 HCE 互斥，开启时会先停止 HCE。
+- 需要 Android 16 QPR2（API 36.1）及以上，且厂商的 NFC 模块保留该扩展；详情页会显示检测结果。
+- 关闭 NFC、重启或进程结束后模拟状态可能丢失，需要重新开启。
+
 ### 其他
 
 - Material 3 + 动态取色（Android 12+），支持深色模式。
@@ -93,13 +100,14 @@
 | 改写 MIFARE 块 0 / UID | ⚠️ 仅 UID 可写卡 |
 | 模拟 NDEF Type 4 标签 | ✅ 支持（只读） |
 | 模拟 MIFARE Classic | ❌ Android 平台不支持第三方应用实现 |
-| 自定义 HCE 的 UID | ❌ UID 由 NFC 控制器决定 |
+| 自定义 HCE 的 UID | ❌ HCE 路由下 UID 由控制器决定 |
+| 模拟 NFC-A UID（OEM 扩展） | ⚠️ 实验性，需 Android 16 QPR2+ 且厂商保留扩展 |
 | 息屏 / 后台模拟 | ⚠️ 受系统默认钱包与厂商策略控制 |
 
 具体说明：
 
 1. **HCE 只暴露 ISO-DEP（ISO 14443-4）通信。** MIFARE Classic 的认证、扇区读写和 UID 由 NFC 控制器固件处理，普通应用既不能呈现 MIFARE UID，也不能应答 crypto1 命令。因此本应用只能模拟标准 NDEF Type 4 标签，无法模拟 MIFARE Classic 门禁卡。
-2. **模拟的 UID 无法自定义。** 即使门禁卡是 ISO-DEP，只要读头校验 UID，模拟结果也可能无法通过。
+2. **HCE 本身不能自定义 UID，UID 模拟走另一条实验性路径。** HCE 只暴露 ISO-DEP，UID 由 NFC 控制器决定。若系统提供 NFC OEM 扩展，应用可通过 `emulateNfcTechnologyATag()` 把保存的 UID 交给控制器；该路径需要 Android 16 QPR2+ 与厂商支持，且只重现 UID，不包含扇区或认证数据。门禁若额外校验密钥、滚动码或服务端状态，仍会拒绝。
 3. **前台优先，不等于系统级替换。** 本应用只会在可见时申请成为首选 HCE 服务；退到后台后仍由系统默认钱包决定路由。普通应用无法静默夺走系统默认钱包的地位。
 4. **读写都不会操作 eSE。** 应用不访问安全元件，也不包含任何绕过厂商限制、提权或修改 NFC 固件/HAL 的逻辑。
 5. **只保存元数据不足以复制门禁卡。** 门禁卡通常依赖扇区密钥、滚动码或服务端校验，仅复制 UID / NDEF 不能保证可用。
@@ -174,6 +182,14 @@ gradle installDebug
 3. 保持应用在前台，将手机贴近外部 NDEF 读卡器。
 4. 关闭开关、切换卡片或退到后台后，首选服务会被释放。
 
+### UID 模拟（实验性）
+
+1. 打开卡片详情，确认「UID 模拟（实验性）」显示设备支持。
+2. 打开开关并在警告对话框中确认；开启前 HCE 会自动停止。
+3. 再次关闭开关即可恢复控制器的默认配置。
+
+> 该功能只重现 UID。门禁若校验扇区密钥、滚动码或服务端状态，仍会拒绝；支持情况取决于系统版本、厂商 NFC 模块和读卡器。
+
 ## 项目结构
 
 ```text
@@ -189,7 +205,9 @@ app/src/main/
 │   ├── nfc/
 │   │   ├── NfcParser.kt               标签解析、NDEF 解码、MIFARE 扇区读取
 │   │   ├── CardWriter.kt              NDEF / MIFARE 写回与写入校验
-│   │   └── NdefHostApduService.kt     HCE NDEF Type 4 卡模拟
+│   │   ├── NdefHostApduService.kt     HCE NDEF Type 4 卡模拟
+│   │   ├── UidCodec.kt                4/7/10 字节 UID 解析
+│   │   └── UidEmulation.kt            NFC-A UID 模拟（OEM 扩展）
 │   └── ui/
 │       ├── NfcApp.kt                  页面导航与全局状态
 │       ├── CardViewModel.kt           卡片、扫描、写入、HCE 状态
@@ -236,11 +254,17 @@ app/src/main/
 
 ## 已知限制
 
-- 卡模拟只支持只读 NDEF Type 4，不支持 MIFARE Classic、银行卡 APDU 或自定义 UID。
+- 卡模拟只支持只读 NDEF Type 4；UID 模拟为实验性功能，且仅限提供 NFC OEM 扩展的设备，不支持 MIFARE Classic 或银行卡 APDU。
+- UID 模拟未实现 raw NCI / 厂商私有 HCE 路径，因此 Android 15 及更早系统、或裁剪了 OEM 扩展的固件上不可用。
+- UID 模拟在关闭 NFC、重启或进程结束后不会自动恢复，应用也不会在后台自动接管 NFC。
 - HCE 在后台的路由由系统默认钱包决定，应用无法强制覆盖。
 - MIFARE Classic 的读取依赖密钥字典；未知密钥的扇区无法读取或写入，除非手动填写正确密钥。
 - 厂卡块 0 为只读；只有魔术卡可以改写 UID。
 - MIFARE Ultralight 仅支持读取和 NDEF 写入，不提供扇区级页编辑。
 - 智能海报只展示摘要，不支持在应用内展开编辑其嵌套 NDEF。
 - 卡片集合整体以单个 JSON 字符串存储，适合个人卡包规模；不是为大规模或高并发场景设计。
-- 应用不包含自动化测试，功能验证以真机 NFC 读写为准。
+- UID 解析包含 JVM 单元测试（`./gradlew testDebugUnitTest`）；NFC 读写与 UID 模拟仍需真机验证。
+
+## 致谢
+
+NFC-A UID 模拟的可行性验证参考了 [ch3sh1re/Emula](https://github.com/ch3sh1re/Emula)（GPL-3.0）与 AOSP `NfcOemExtension` API。本项目的实现为独立编写，未复制 Emula 源码。

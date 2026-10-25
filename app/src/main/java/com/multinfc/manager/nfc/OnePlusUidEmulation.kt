@@ -87,14 +87,38 @@ object OnePlusUidEmulation {
                 pendingRestore = pending,
             )
         } catch (failure: Throwable) {
-            Probe(
-                available = false,
-                reason = describe(failure),
-                secureSettingsGranted = granted,
-                pendingRestore = pending,
-            )
+            // If the library and methods exist, the vendor service may simply
+            // be blocked until WRITE_SECURE_SETTINGS is granted. Keep the path
+            // available so the settings page can show the ADB command.
+            if (hasVendorApiShape(context)) {
+                Probe(
+                    available = true,
+                    reason = describe(failure),
+                    secureSettingsGranted = granted,
+                    pendingRestore = pending,
+                )
+            } else {
+                Probe(
+                    available = false,
+                    reason = describe(failure),
+                    secureSettingsGranted = granted,
+                    pendingRestore = pending,
+                )
+            }
         }
     }
+
+    private fun hasVendorApiShape(context: Context): Boolean = runCatching {
+        val adapterClass = Class.forName(VENDOR_ADAPTER_CLASS, false, context.classLoader)
+        adapterClass.getMethod("getVendorNfcAdapter")
+        adapterClass.getMethod(
+            "setHceTypeAConfig",
+            Boolean::class.javaPrimitiveType,
+            ByteArray::class.java,
+            ByteArray::class.java,
+            ByteArray::class.java,
+        )
+    }.isSuccess
 
     fun activate(context: Context, uid: ByteArray): UidEmulation.Outcome {
         if (uid.size !in UidCodec.supportedByteLengths) {
